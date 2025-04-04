@@ -26,7 +26,7 @@ MANIFEST
 *.sqlite
 
 # Environment
-.env
+.env    
 .venv
 env/
 venv/
@@ -41,3 +41,11 @@ secrets.py
 # IDE
 .vscode/
 .idea/
+# Конфигурационные файлы с секретами
+config.py
+*.env
+
+# Файлы базы данных
+*.db
+*.sqlite
+*.sqlite3tasks.db
