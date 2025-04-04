@@ -49,3 +49,5 @@ config.py
 *.db
 *.sqlite
 *.sqlite3tasks.db
+
+/data/

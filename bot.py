@@ -13,6 +13,7 @@ from telegram.ext import (
 import sqlite3
 from datetime import datetime
 import os
+from config import ADMIN_IDS
 
 
 # Настройка логирования
@@ -29,14 +30,17 @@ WAITING_PHOTO, ADMIN_MENU, ADD_TASK, EDIT_TASK, DELETE_TASK, USER_MODE, WAITING_
 WAITING_PHOTO, ADMIN_MENU, ADD_TASK, EDIT_TASK, DELETE_TASK, USER_MODE, WAITING_COMMENT, SKIP_TASK = range(8)
 # Инициализация базы данных
 def init_db():
-    conn = sqlite3.connect('tasks.db')
+    db_dir = os.path.join(os.path.dirname(__file__), 'data')
+    os.makedirs(db_dir, exist_ok=True)
+    
+    # Указываем путь к БД в папке data
+    db_path = os.path.join(db_dir, 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-
     cursor.execute('DROP TABLE IF EXISTS completed_tasks')
     cursor.execute('DROP TABLE IF EXISTS task_comments')
     cursor.execute('DROP TABLE IF EXISTS skipped_tasks')
-
     # Таблица задач
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS tasks (
@@ -56,12 +60,7 @@ def init_db():
         FOREIGN KEY(task_id) REFERENCES tasks(id)
     )
     ''')
-    # Таблица администраторов
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS admins (
-        user_id INTEGER PRIMARY KEY
-    )
-    ''')
+
     
     # Таблица комментариев
     cursor.execute('''
@@ -102,16 +101,15 @@ def init_db():
 
 # Проверка прав администратора
 def is_admin(user_id):
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute('SELECT 1 FROM admins WHERE user_id = ?', (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result is not None
+    return user_id in ADMIN_IDS
 
 # Получение списка задач
 def get_tasks(only_active=False):
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     if only_active:
@@ -128,7 +126,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     
     # Сохраняем/обновляем информацию о пользователе
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('''
     INSERT OR REPLACE INTO users (id, first_name, username)
@@ -210,7 +209,8 @@ async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task_id = tasks[current_task_idx][0]
         context.user_data['current_task_id'] = task_id
 
-        conn = sqlite3.connect('tasks.db')
+        db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute(
             '''INSERT INTO completed_tasks 
@@ -237,7 +237,8 @@ async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_PHOTO
  
 async def show_user_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -290,7 +291,8 @@ async def handle_show_more_photos(update: Update, context: ContextTypes.DEFAULT_
     
     offset = context.user_data.get('photo_offset', 10)
     
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('''
     SELECT ct.telegram_file_id, u.first_name, u.username, t.description, ct.completion_date
@@ -366,7 +368,8 @@ async def handle_comments_callback(update: Update, context: ContextTypes.DEFAULT
     
     if query.data.startswith("view_comments_"):
         task_id = int(query.data.split("_")[2])
-        conn = sqlite3.connect('tasks.db')
+        db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         cursor.execute('SELECT description FROM tasks WHERE id = ?', (task_id,))
@@ -415,7 +418,8 @@ async def save_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Ошибка: задача не найдена.")
         return ConversationHandler.END
     
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     if update.message.voice:
@@ -472,7 +476,8 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def save_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task_description = update.message.text
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('INSERT INTO tasks (description) VALUES (?)', (task_description,))
     conn.commit()
@@ -534,7 +539,8 @@ async def save_task_changes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if new_status not in ['активна', 'неактивна']:
             raise ValueError
         
-        conn = sqlite3.connect('tasks.db')
+        db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         cursor.execute('SELECT 1 FROM tasks WHERE id = ?', (task_id,))
@@ -580,7 +586,8 @@ async def confirm_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         task_id = int(update.message.text)
         
-        conn = sqlite3.connect('tasks.db')
+        db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         cursor.execute('SELECT description FROM tasks WHERE id = ?', (task_id,))
@@ -602,7 +609,8 @@ async def confirm_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADMIN_MENU
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)   
     cursor = conn.cursor()
     
     cursor.execute('SELECT COUNT(*) FROM completed_tasks')
@@ -657,7 +665,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def check_db_structure():
     conn = None
     try:
-        conn = sqlite3.connect('tasks.db')
+        db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+        conn = sqlite3.connect(db_path)        
         cursor = conn.cursor()
         
         cursor.execute("PRAGMA table_info(completed_tasks)")
@@ -679,7 +688,8 @@ def check_db_structure():
 
 
 def migrate_db():
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     try:
@@ -733,7 +743,8 @@ async def save_skip_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     
     task_id = tasks[current_task_idx][0]
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     if update.message.voice:
@@ -780,7 +791,8 @@ async def save_skip_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 async def show_skipped_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect('tasks.db')
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -828,7 +840,8 @@ def main():
             logger.critical("Не удалось инициализировать БД!")
             return
         
-    application = Application.builder().token("8149130191:AAHV9ggp-rAvBB5ZC6OH4YIJaXaSJxqb_Pg").build()
+    from config import BOT_TOKEN
+    application = Application.builder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
         entry_points=[
