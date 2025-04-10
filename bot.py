@@ -56,11 +56,11 @@ def init_db():
         user_id INTEGER NOT NULL,
         task_id INTEGER NOT NULL,
         telegram_file_id TEXT,
+        file_type TEXT,
         completion_date DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(task_id) REFERENCES tasks(id)
     )
     ''')
-
     
     # Таблица комментариев
     cursor.execute('''
@@ -196,8 +196,20 @@ async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.message.from_user
-        photo_file = update.message.photo[-1]
-        file_id = photo_file.file_id
+        file_id = None
+        file_type = None
+        
+        if update.message.photo:
+            photo_file = update.message.photo[-1]
+            file_id = photo_file.file_id
+            file_type = 'photo'
+        elif update.message.video:
+            video_file = update.message.video
+            file_id = video_file.file_id
+            file_type = 'video'
+        else:
+            await update.message.reply_text("Пожалуйста, отправьте фото или видео.")
+            return WAITING_PHOTO
 
         tasks = context.user_data.get('tasks', [])
         current_task_idx = context.user_data.get('current_task', 0)
@@ -214,14 +226,13 @@ async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = conn.cursor()
         cursor.execute(
             '''INSERT INTO completed_tasks 
-            (user_id, task_id, telegram_file_id) 
-            VALUES (?, ?, ?)''',
-            (user.id, task_id, file_id)
+            (user_id, task_id, telegram_file_id, file_type) 
+            VALUES (?, ?, ?, ?)''',
+            (user.id, task_id, file_id, file_type)
         )
         conn.commit()
         conn.close()
 
-        # Создаем клавиатуру для комментария
         keyboard = [
             [KeyboardButton("Пропустить комментарий")]
         ]
@@ -235,14 +246,14 @@ async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка: {e}")
         await update.message.reply_text("❌ Произошла ошибка. Попробуйте еще раз.")
         return WAITING_PHOTO
- 
+
 async def show_user_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     cursor.execute('''
-    SELECT ct.telegram_file_id, u.first_name, u.username, t.description, ct.completion_date
+    SELECT ct.telegram_file_id, ct.file_type, u.first_name, u.username, t.description, ct.completion_date
     FROM completed_tasks ct
     JOIN tasks t ON ct.task_id = t.id
     JOIN users u ON ct.user_id = u.id
@@ -251,18 +262,17 @@ async def show_user_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     LIMIT 10
     ''')
     
-    photos = cursor.fetchall()
+    media_items = cursor.fetchall()
     conn.close()
     
-    if not photos:
-        await update.message.reply_text("Нет отправленных фото.")
+    if not media_items:
+        await update.message.reply_text("Нет отправленных медиафайлов.")
         return
     
-    for photo in photos:
+    for item in media_items:
         try:
-            file_id, first_name, username, description, completion_date = photo
+            file_id, file_type, first_name, username, description, completion_date = item
             
-            # Формируем текст с ссылкой на пользователя
             if username:
                 user_link = f"<a href='https://t.me/{username}'>{first_name}</a>"
             else:
@@ -270,32 +280,41 @@ async def show_user_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
             caption = f"👤 {user_link}\n📝 {description}\n🕒 {completion_date}"
             
-            await context.bot.send_photo(
-                chat_id=update.message.chat_id,
-                photo=file_id,
-                caption=caption,
-                parse_mode='HTML'
-            )
+            if file_type == 'photo':
+                await context.bot.send_photo(
+                    chat_id=update.message.chat_id,
+                    photo=file_id,
+                    caption=caption,
+                    parse_mode='HTML'
+                )
+            elif file_type == 'video':
+                await context.bot.send_video(
+                    chat_id=update.message.chat_id,
+                    video=file_id,
+                    caption=caption,
+                    parse_mode='HTML'
+                )
         except Exception as e:
-            logger.error(f"Ошибка отправки фото: {e}")
+            logger.error(f"Ошибка отправки медиа: {e}")
     
     await update.message.reply_text(
-        "Загружены последние 10 фото",
+        "Загружены последние 10 медиафайлов",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Показать еще", callback_data="show_more_photos")]
+            [InlineKeyboardButton("Показать еще", callback_data="show_more_media")]
         ])
     )
-async def handle_show_more_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def handle_show_more_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    offset = context.user_data.get('photo_offset', 10)
+    offset = context.user_data.get('media_offset', 10)
     
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('''
-    SELECT ct.telegram_file_id, u.first_name, u.username, t.description, ct.completion_date
+    SELECT ct.telegram_file_id, ct.file_type, u.first_name, u.username, t.description, ct.completion_date
     FROM completed_tasks ct
     JOIN tasks t ON ct.task_id = t.id
     JOIN users u ON ct.user_id = u.id
@@ -304,16 +323,16 @@ async def handle_show_more_photos(update: Update, context: ContextTypes.DEFAULT_
     LIMIT 10 OFFSET ?
     ''', (offset,))
     
-    photos = cursor.fetchall()
+    media_items = cursor.fetchall()
     conn.close()
     
-    if not photos:
-        await query.edit_message_text("Больше фото нет.")
+    if not media_items:
+        await query.edit_message_text("Больше медиафайлов нет.")
         return
     
-    for photo in photos:
+    for item in media_items:
         try:
-            file_id, first_name, username, description, completion_date = photo
+            file_id, file_type, first_name, username, description, completion_date = item
             
             if username:
                 user_link = f"<a href='https://t.me/{username}'>{first_name}</a>"
@@ -322,23 +341,32 @@ async def handle_show_more_photos(update: Update, context: ContextTypes.DEFAULT_
                 
             caption = f"👤 {user_link}\n📝 {description}\n🕒 {completion_date}"
             
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=file_id,
-                caption=caption,
-                parse_mode='HTML'
-            )
+            if file_type == 'photo':
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=file_id,
+                    caption=caption,
+                    parse_mode='HTML'
+                )
+            elif file_type == 'video':
+                await context.bot.send_video(
+                    chat_id=query.message.chat_id,
+                    video=file_id,
+                    caption=caption,
+                    parse_mode='HTML'
+                )
         except Exception as e:
-            logger.error(f"Ошибка отправки фото: {e}")
+            logger.error(f"Ошибка отправки медиа: {e}")
     
-    context.user_data['photo_offset'] = offset + 10
+    context.user_data['media_offset'] = offset + 10
     
     await query.edit_message_text(
-        "Загружены следующие 10 фото",
+        "Загружены следующие 10 медиафайлов",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Показать еще", callback_data="show_more_photos")]
+            [InlineKeyboardButton("Показать еще", callback_data="show_more_media")]
         ])
     )
+
 async def show_comments_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasks = get_tasks()
     
@@ -688,11 +716,13 @@ def check_db_structure():
 
 
 def migrate_db():
-    db_path = os.path.join(os.path.dirname(__file__), 'data', 'tasks.db')
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    db_dir = os.path.join(os.path.dirname(__file__), 'data')
+    os.makedirs(db_dir, exist_ok=True)  # Создаем папку если ее нет
+    db_path = os.path.join(db_dir, 'tasks.db')
     
     try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
         # Переименовываем старую таблицу
         cursor.execute('ALTER TABLE completed_tasks RENAME TO completed_tasks_old')
         
@@ -706,7 +736,7 @@ def migrate_db():
             completion_date DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(task_id) REFERENCES tasks(id)
         )
-        ''')
+        ''')    
         
         # Переносим данные
         cursor.execute('''
@@ -849,9 +879,8 @@ def main():
             CommandHandler('admin', admin_command),
             CommandHandler('id', get_id)
         ],
-
         states={
-                ADMIN_MENU: [
+            ADMIN_MENU: [
                 MessageHandler(filters.Regex('^Админ-панель$'), show_admin_menu),
                 MessageHandler(filters.Regex('^Добавить задачу$'), add_task),
                 MessageHandler(filters.Regex('^Редактировать задачи$'), edit_tasks),
@@ -860,14 +889,14 @@ def main():
                 MessageHandler(filters.Regex('^📷 Просмотреть фото$'), show_user_photos),
                 MessageHandler(filters.Regex('^📝 Комментарии$'), show_comments_menu),
                 MessageHandler(filters.Regex('^Рабочий режим$'), user_mode_start),
-                MessageHandler(filters.Regex('^⏸ Пропущенные задачи$'), show_skipped_tasks),  # Добавлено
-                CallbackQueryHandler(handle_show_more_photos, pattern="^show_more_photos$"),
+                MessageHandler(filters.Regex('^⏸ Пропущенные задачи$'), show_skipped_tasks),
+                CallbackQueryHandler(handle_show_more_media, pattern="^show_more_media$"),
                 CallbackQueryHandler(handle_comments_callback)
             ],
-                WAITING_PHOTO: [
+            WAITING_PHOTO: [
                 MessageHandler(filters.Regex('^Задача выполнена$'), task_done),
                 MessageHandler(filters.Regex('^Пропустить задачу$'), skip_task),
-                MessageHandler(filters.PHOTO, receive_photo)
+                MessageHandler(filters.PHOTO | filters.VIDEO, receive_photo)
             ],
             SKIP_TASK: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, save_skip_reason),
