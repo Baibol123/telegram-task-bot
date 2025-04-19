@@ -40,17 +40,7 @@ def init_db():
     db_path = os.path.join(db_dir, 'truck_tasks_v2.db')
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
-    cursor.execute("PRAGMA table_info(completed_checks)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if 'completion_date' not in columns:
-        cursor.execute('''
-            ALTER TABLE completed_checks
-            ADD COLUMN completion_date DATETIME DEFAULT CURRENT_TIMESTAMP
-        ''')
-        logger.info("Добавлен столбец completion_date в таблицу completed_checks")
-    
-    conn.commit()
+
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS trucks (
@@ -100,6 +90,15 @@ def init_db():
         FOREIGN KEY(task_id) REFERENCES truck_tasks(id)
     )
     ''')
+    cursor.execute("PRAGMA table_info(completed_checks)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'completion_date' not in columns:
+        cursor.execute('''
+            ALTER TABLE completed_checks
+            ADD COLUMN completion_date DATETIME DEFAULT CURRENT_TIMESTAMP
+        ''')
+        logger.info("Добавлен столбец completion_date в таблицу completed_checks")
+    
     
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS check_comments (
